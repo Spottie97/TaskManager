@@ -1,0 +1,116 @@
+{
+  "name": "mcp-vscode-extension",
+  "displayName": "MCP Task Manager",
+  "description": "VSCode extension for MCP Task Management",
+  "version": "0.0.1",
+  "publisher": "MCPPublisherPlaceholder",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "mcp-vscode-extension.generateProjectPlan",
+        "title": "MCP: Generate Project Plan from Prompt",
+        "category": "MCP"
+      },
+      {
+        "command": "mcp-vscode-extension.markTaskAsComplete",
+        "title": "MCP: Mark Task as Complete",
+        "category": "MCP",
+        "icon": "$(check)"
+      },
+      {
+        "command": "mcp-vscode-extension.markTaskAsPending",
+        "title": "MCP: Mark Task as Pending",
+        "category": "MCP",
+        "icon": "$(circle-large-outline)"
+      },
+      {
+        "command": "mcp-vscode-extension.markTaskAsInProgress",
+        "title": "MCP: Mark Task as In-Progress",
+        "category": "MCP",
+        "icon": "$(sync~spin)"
+      },
+      {
+        "command": "mcp-vscode-extension.markTaskAsBlocked",
+        "title": "MCP: Mark Task as Blocked",
+        "category": "MCP",
+        "icon": "$(error)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mcpTaskViewContainer",
+          "title": "MCP Tasks",
+          "icon": "$(checklist)"
+        }
+      ]
+    },
+    "views": {
+      "mcpTaskViewContainer": [
+        {
+          "id": "mcpTaskView",
+          "name": "Tasks",
+          "icon": "$(list-ordered)",
+          "contextualTitle": "MCP Tasks",
+          "when": "true"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "mcp-vscode-extension.markTaskAsComplete",
+          "when": "view == mcpTaskView && viewItem == taskItem",
+          "group": "modification@1"
+        },
+        {
+          "command": "mcp-vscode-extension.markTaskAsPending",
+          "when": "view == mcpTaskView && viewItem == taskItem",
+          "group": "modification@2"
+        },
+        {
+          "command": "mcp-vscode-extension.markTaskAsInProgress",
+          "when": "view == mcpTaskView && viewItem == taskItem",
+          "group": "modification@3"
+        },
+        {
+          "command": "mcp-vscode-extension.markTaskAsBlocked",
+          "when": "view == mcpTaskView && viewItem == taskItem",
+          "group": "modification@4"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "^18.0.0",
+    "@types/mocha": "^10.0.1",
+    "@types/axios": "^0.14.0",
+    "@typescript-eslint/eslint-plugin": "^6.7.3",
+    "@typescript-eslint/parser": "^6.7.3",
+    "eslint": "^8.50.0",
+    "glob": "^10.3.3",
+    "mocha": "^10.2.0",
+    "typescript": "^5.2.2",
+    "ts-loader": "^9.4.4",
+    "webpack": "^5.88.2",
+    "webpack-cli": "^5.1.4"
+  },
+  "dependencies": {
+    "axios": "^1.5.1"
+  }
+}

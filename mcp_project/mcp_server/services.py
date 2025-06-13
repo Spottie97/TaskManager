@@ -1,93 +1,105 @@
 import uuid
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional # Added Optional
 
-from .models import Project, ProjectCreate, Task, TaskCreate, TaskStatus, TaskComplexity
-from .database import (create_project_in_db, get_project as get_project_from_db, 
-                     get_task as get_task_from_db, update_task_status_in_db)
+from sqlalchemy.ext.asyncio import AsyncSession # New import
+
+from .models import Project, ProjectCreate, Task, TaskCreate, TaskStatus, TaskComplexity, TaskUpdate # Added TaskUpdate
+# Updated database imports to reflect new async functions and their expected arguments
+from .database import (
+    create_project_in_db,
+    get_project_from_db,
+    get_task_from_db,
+    update_task_status_in_db,
+    update_task_details_in_db, # Added update_task_details_in_db
+    add_task_to_project_in_db, # Added add_task_to_project_in_db
+    delete_task_from_db # Added delete_task_from_db
+)
 
 # --- Prompt Processing and Planning Service ---
 
-def _convert_simulated_llm_task_to_model(task_data: Dict[str, Any], project_id: uuid.UUID, parent_id: uuid.UUID | None = None) -> Task:
+# _convert_simulated_llm_task_to_model remains largely the same as it prepares Pydantic models
+# which are then passed to the database layer. It doesn't directly interact with DB.
+def _convert_simulated_llm_task_to_model(task_data: Dict[str, Any], project_id: uuid.UUID, parent_id: Optional[uuid.UUID] = None) -> Task:
     """Helper to convert a single task dictionary (from simulated LLM) to a Task model."""
-    # Ensure complexity is correctly mapped or defaulted
-    complexity_value = task_data.get("complexity", None)
-    if isinstance(complexity_value, str):
-        task_complexity = TaskComplexity(complexity=complexity_value)
-    else:
-        task_complexity = TaskComplexity() # Defaults to None
+    complexity_str = task_data.get("complexity")
+    task_complexity_obj = TaskComplexity(complexity=complexity_str) if complexity_str else TaskComplexity()
 
-    # Create the task model
+    # Generate new ID for each task. This is crucial as database layer expects Pydantic models with IDs.
+    task_id = uuid.uuid4()
+
+    # Prepare sub_tasks first to ensure their IDs are generated before being referenced as dependencies (if that were the case)
+    # Though current dependency model is by ID, and LLM simulation doesn't create cross-task dependencies yet.
+    pydantic_sub_tasks = []
+    if "sub_tasks" in task_data and task_data["sub_tasks"]:
+        for sub_task_data in task_data["sub_tasks"]:
+            # project_id is passed down, parent_id is the current task's ID
+            sub_task_model = _convert_simulated_llm_task_to_model(sub_task_data, project_id, parent_id=task_id)
+            pydantic_sub_tasks.append(sub_task_model)
+
+    # Handle dependencies - these are expected to be UUIDs of other tasks
+    # In the current simulation, these would be manually defined if any.
+    # The LLM would need to be aware of generated task IDs to create valid dependency links.
+    dependencies_ids = []
+    raw_dependencies = task_data.get("dependencies", [])
+    for dep in raw_dependencies:
+        try:
+            dependencies_ids.append(uuid.UUID(dep))
+        except ValueError:
+            print(f"Warning: Invalid UUID format for dependency '{dep}' in task '{task_data.get('title')}'. Skipping.")
+
     task = Task(
-        id=uuid.uuid4(), # Generate new ID for each task
+        id=task_id,
         project_id=project_id,
         parent_id=parent_id,
         title=task_data["title"],
         description=task_data.get("description"),
-        status=TaskStatus(status='pending'), # Default status
-        complexity=task_complexity,
+        status=TaskStatus.PENDING, # Default status
+        complexity=task_complexity_obj,
         estimated_time=task_data.get("estimatedTime"),
-        dependencies=[uuid.UUID(dep) for dep in task_data.get("dependencies", [])], # Handle dependencies if provided
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-        sub_tasks=[] # Initialize sub_tasks list
+        dependencies=dependencies_ids,
+        created_at=datetime.utcnow(), # Pydantic model still tracks this for creation logic
+        updated_at=datetime.utcnow(), # Pydantic model still tracks this for creation logic
+        sub_tasks=pydantic_sub_tasks
     )
-
-    # Recursively convert and add sub-tasks
-    if "sub_tasks" in task_data and task_data["sub_tasks"]:
-        for sub_task_data in task_data["sub_tasks"]:
-            sub_task_model = _convert_simulated_llm_task_to_model(sub_task_data, project_id, parent_id=task.id)
-            task.sub_tasks.append(sub_task_model)
-    
     return task
 
-def process_prompt_to_plan(prompt: str) -> Project:
+async def process_prompt_to_plan(db: AsyncSession, prompt: str) -> Project:
     """
     Simulates calling an LLM to break down the prompt into a project plan.
-    For MVP, this returns a hardcoded plan based on a known prompt.
+    Now an async function that uses the database session.
     """
-    print(f"Processing prompt: {prompt[:50]}...") # Log a bit of the prompt
+    print(f"Processing prompt: {prompt[:50]}...")
 
-    # Simulate LLM response (hardcoded for MVP)
-    # Using the example: "Create a Python Flask web application with a single page that displays 
-    # the current weather for a given city using the OpenWeatherMap API"
-    
     project_name = "Flask Weather App (from Prompt)"
     if "flask weather app" in prompt.lower():
         simulated_llm_tasks_data = [
             {
-                "title": "Set up the project environment",
-                "complexity": "simple",
+                "title": "Set up project environment", "complexity": "simple",
                 "sub_tasks": [
-                    {"title": "Create a project directory", "complexity": "simple"},
-                    {"title": "Initialize a virtual environment", "complexity": "simple"},
-                    {"title": "Install necessary libraries (Flask, requests)", "complexity": "simple"},
+                    {"title": "Create project directory", "complexity": "simple"},
+                    {"title": "Initialize virtual environment", "complexity": "simple"},
+                    {"title": "Install Flask & requests", "complexity": "simple"},
                 ]
             },
             {
-                "title": "Develop the backend server",
-                "complexity": "medium",
+                "title": "Develop backend server", "complexity": "medium",
                 "sub_tasks": [
-                    {"title": "Create the main app.py file", "complexity": "simple"},
-                    {"title": "Implement the basic Flask app structure", "complexity": "medium"},
-                    {"title": "Create an API route that accepts a city name", "complexity": "medium"},
+                    {"title": "Create main app.py", "complexity": "simple"},
+                    {"title": "Implement Flask app structure", "complexity": "medium"},
+                    {"title": "Create API route for city weather", "complexity": "medium"},
                 ]
             },
             {
-                "title": "Integrate with the OpenWeatherMap API",
-                "complexity": "medium",
-                # Dependencies will be more robustly handled in a later phase
-                # For MVP, we can imagine the LLM might provide placeholder IDs or descriptions
-                # "dependencies": ["ID_of_task_Create_API_route"], 
+                "title": "Integrate OpenWeatherMap API", "complexity": "medium",
                 "sub_tasks": [
-                    {"title": "Write a function to fetch weather data", "complexity": "medium"},
-                    {"title": "Handle API keys securely (do not hardcode)", "complexity": "simple"},
-                    {"title": "Parse the JSON response from the API", "complexity": "medium"},
+                    {"title": "Function to fetch weather data", "complexity": "medium"},
+                    {"title": "Secure API key handling", "complexity": "simple"},
+                    {"title": "Parse API JSON response", "complexity": "medium"},
                 ]
             }
         ]
     else:
-        # Generic fallback if the prompt doesn't match the specific example
         project_name = "Generic Project (from Prompt)"
         simulated_llm_tasks_data = [
             {"title": "Understand Requirements", "complexity": "simple"},
@@ -99,40 +111,79 @@ def process_prompt_to_plan(prompt: str) -> Project:
             {"title": "Test Feature X", "complexity": "medium"}
         ]
 
-    # Create Project object
-    project_id = uuid.uuid4()
-    project_create = ProjectCreate(name=project_name, original_prompt=prompt)
-    project = Project(
-        **project_create.dict(), 
-        id=project_id, 
-        created_at=datetime.utcnow(), 
+    project_id = uuid.uuid4() # Generate project ID here
+    project_create_pydantic = ProjectCreate(name=project_name, original_prompt=prompt)
+
+    # Convert LLM tasks to Pydantic Task models
+    pydantic_tasks_list = []
+    for task_data in simulated_llm_tasks_data:
+        # parent_id is None for top-level tasks
+        task_model = _convert_simulated_llm_task_to_model(task_data, project_id, parent_id=None)
+        pydantic_tasks_list.append(task_model)
+
+    # Create Pydantic Project model - this is what create_project_in_db expects
+    project_pydantic = Project(
+        **project_create_pydantic.dict(),
+        id=project_id,
+        created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
-        tasks=[]
+        tasks=pydantic_tasks_list
     )
 
-    # Convert simulated LLM tasks to Task models and add to project
-    for task_data in simulated_llm_tasks_data:
-        task_model = _convert_simulated_llm_task_to_model(task_data, project_id)
-        project.tasks.append(task_model)
-
-    # Save to DB
-    created_project = create_project_in_db(project)
+    # Save to DB using the new async DB function
+    created_project = await create_project_in_db(db, project_pydantic)
     return created_project
 
-# --- Task Management Services ---
+# --- Task Management Services (now async and use db session) ---
 
-def get_project_service(project_id: uuid.UUID) -> Project | None:
-    return get_project_from_db(project_id)
+async def get_project_service(db: AsyncSession, project_id: uuid.UUID) -> Optional[Project]:
+    return await get_project_from_db(db, project_id)
 
-def get_task_service(task_id: uuid.UUID) -> Task | None:
-    return get_task_from_db(task_id)
+async def get_task_service(db: AsyncSession, task_id: uuid.UUID) -> Optional[Task]:
+    return await get_task_from_db(db, task_id)
 
-def update_task_status_service(task_id: uuid.UUID, status_update: TaskStatus) -> Task | None:
-    """Updates the status of a task."""
-    # Validate if the task exists first (optional, as DB function might handle it)
-    task = get_task_from_db(task_id)
-    if not task:
-        return None # Or raise HTTPException(status_code=404, detail="Task not found") in API layer
-    
-    # The database function now takes TaskStatus directly
-    return update_task_status_in_db(task_id, status_update)
+async def update_task_status_service(db: AsyncSession, task_id: uuid.UUID, status_update: TaskStatus) -> Optional[Task]:
+    """Updates the status of a task. Now async and uses db session."""
+    # The database function `update_task_status_in_db` will handle if task not found by returning None.
+    # The API layer in main.py is responsible for raising HTTPException if result is None.
+    return await update_task_status_in_db(db, task_id, status_update)
+
+async def update_task_details_service(
+    db: AsyncSession,
+    task_id: uuid.UUID,
+    task_update_data: TaskUpdate
+) -> Optional[Task]:
+    """Updates the details of a task. Now async and uses db session."""
+    return await update_task_details_in_db(db, task_id, task_update_data)
+
+
+async def add_task_to_project_service(
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    task_create_data: TaskCreate
+) -> Optional[Task]: # Returns the created task or None if project not found
+    """Adds a new task to a specific project."""
+    # First, verify the project exists to provide a clear error if not.
+    # get_project_from_db returns a PydanticProject or None.
+    project = await get_project_from_db(db, project_id)
+    if not project:
+        return None # Signal that project wasn't found
+
+    # If project exists, proceed to add the task
+    # The add_task_to_project_in_db function handles parent_id validation internally
+    try:
+        new_task = await add_task_to_project_in_db(db, task_create_data, project_id)
+        return new_task
+    except ValueError as e:
+        # This could catch errors from add_task_to_project_in_db like invalid parent_id
+        print(f"Error adding task to project {project_id}: {e}") # Log for server admin
+        # Depending on desired behavior, could re-raise a specific service-level exception
+        # or let the API layer handle the None return by raising an appropriate HTTP error.
+        return None
+
+async def delete_task_service(db: AsyncSession, task_id: uuid.UUID) -> bool:
+    """Deletes a task by its ID. Returns True if deletion was successful, False otherwise."""
+    # The database function `delete_task_from_db` will handle if task not found
+    # by returning False, or if deletion fails for other reasons.
+    success = await delete_task_from_db(db, task_id)
+    return success
